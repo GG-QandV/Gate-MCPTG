@@ -2,6 +2,7 @@
 Description=Telegram MCP Daemon (tgmcpd)
 After=network.target
 Wants=network.target
+Requires=tgmcpd.socket
 StartLimitIntervalSec=60
 StartLimitBurst=5
 

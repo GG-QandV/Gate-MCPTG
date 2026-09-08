@@ -1,0 +1,59 @@
+#!/bin/bash
+# tgmcpd-monitor — periodic health check (socket-activation semantics)
+#
+# v0.9.3: the socket FILE is owned by tgmcpd.socket (systemd) and always
+# exists. "socket not found" is impossible by design; checks are:
+#   1. tgmcpd.socket unit active
+#   2. IPC connect (refused => service down/restarting)
+#   3. health JSON (status/telegram/store)
+set -euo pipefail
+
+SOCK="${TGMCPD_SOCK:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tgmcpd.sock}"
+LOG_TAG="tgmcpd-monitor"
+
+log() {
+    echo "$LOG_TAG: $*" >&2
+    logger --id=$$ -t "$LOG_TAG" "$*" 2>/dev/null || true
+}
+
+notify() {
+    notify-send -u "$1" -a "$LOG_TAG" "$2" "$3" 2>/dev/null || true
+}
+
+# 1. socket unit
+state=$(systemctl --user is-active tgmcpd.socket 2>/dev/null || true)
+if [ "$state" != "active" ]; then
+    log "CRITICAL: tgmcpd.socket is '$state' (socket file management offline)"
+    notify critical "tgmcpd: CRITICAL" "tgmcpd.socket is $state"
+    exit 1
+fi
+
+# 2. IPC connect + 3. health
+result=$(echo '{"method":"health","params":{},"id":1}' | socat -t 5 - UNIX-CONNECT:"$SOCK" 2>/dev/null) || {
+    log "CRITICAL: IPC connect refused on $SOCK (tgmcpd.service down or restarting)"
+    notify critical "tgmcpd: CRITICAL" "tgmcpd.service down (socket alive)"
+    exit 1
+}
+
+status=$(echo "$result" | python3 -c "
+import sys, json
+try:
+    r = json.load(sys.stdin)
+    print(r.get('result', {}).get('status', 'unknown'))
+    store = r.get('result', {}).get('store', {})
+    telegram = r.get('result', {}).get('telegram', False)
+    if store:
+        print('store_files:', list(store.keys()))
+    print('telegram:', telegram)
+except Exception as e:
+    print('parse-error:', e)
+")
+
+first=$(echo "$status" | head -1)
+if [ "$first" = "ok" ]; then
+    log "OK — $(echo "$status" | tail -n +2 | tr '\n' ' ')"
+else
+    log "CRITICAL: health status=$first"
+    notify critical "tgmcpd: CRITICAL" "health status=$first"
+    exit 1
+fi

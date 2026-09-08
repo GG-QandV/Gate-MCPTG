@@ -1,0 +1,11 @@
+[Unit]
+Description=tgmcpd IPC socket (owner of the socket file)
+
+[Socket]
+ListenStream=%t/tgmcpd.sock
+SocketMode=0600
+RemoveOnStop=true
+Service=tgmcpd.service
+
+[Install]
+WantedBy=sockets.target

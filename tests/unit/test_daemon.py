@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.mark.asyncio
@@ -59,6 +59,7 @@ async def test_restore_called_on_start(tmp_path):
         patch("src.mcp_telegram.daemon.TelegramSettings") as mock_settings,
         patch("src.mcp_telegram.daemon._check_stale_socket"),
         patch("src.mcp_telegram.daemon.acquire_instance_lock"),
+        patch("src.mcp_telegram.daemon.sd_listen_fds", return_value=[]),
         patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
         patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
         patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,
@@ -76,7 +77,8 @@ async def test_restore_called_on_start(tmp_path):
         )
 
         ipc_instance = mock_ipc_class.return_value
-        ipc_instance.start = AsyncMock()
+        ipc_instance.bind = AsyncMock(return_value=MagicMock())
+        ipc_instance.serve = AsyncMock()
 
         mock_inbox = mock_inbox_class.return_value
         mock_inbox.restore_from_store = AsyncMock(return_value=3)
@@ -98,6 +100,7 @@ async def test_bridge_created_and_started(tmp_path):
         patch("src.mcp_telegram.daemon.TelegramSettings") as mock_settings,
         patch("src.mcp_telegram.daemon._check_stale_socket"),
         patch("src.mcp_telegram.daemon.acquire_instance_lock"),
+        patch("src.mcp_telegram.daemon.sd_listen_fds", return_value=[]),
         patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
         patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
         patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,
@@ -117,7 +120,8 @@ async def test_bridge_created_and_started(tmp_path):
         )
 
         ipc_instance = mock_ipc_class.return_value
-        ipc_instance.start = AsyncMock()
+        ipc_instance.bind = AsyncMock(return_value=MagicMock())
+        ipc_instance.serve = AsyncMock()
 
         mock_inbox = mock_inbox_class.return_value
         mock_inbox.restore_from_store = AsyncMock(return_value=0)
@@ -133,3 +137,51 @@ async def test_bridge_created_and_started(tmp_path):
             topic_map=[(1, 2, "agent:opencode"), (3, 4, "agent2:opencode")],
         )
         bridge_instance.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_main_activation_uses_fd_no_unlink(tmp_path):
+    """v0.9.3: with systemd-passed fd, main binds via sock= and never unlinks."""
+    from src.mcp_telegram.daemon import main as daemon_main
+
+    sock_path = str(tmp_path / "tgmcpd.sock")
+    mock_fd = MagicMock()
+    mock_fd.getsockname.return_value = sock_path
+    mock_fd.getsockopt.return_value = 1  # SO_ACCEPTCONN: listening
+
+    with (
+        patch("src.mcp_telegram.daemon.TelegramSettings") as mock_settings,
+        patch("src.mcp_telegram.daemon.acquire_instance_lock"),
+        patch("src.mcp_telegram.daemon.get_sock_path", return_value=sock_path),
+        patch("src.mcp_telegram.daemon.sd_listen_fds", return_value=[mock_fd]),
+        patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
+        patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
+        patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,
+        patch("src.mcp_telegram.daemon.InboxBridge") as mock_bridge_class,
+        patch("src.mcp_telegram.daemon.Path.unlink", autospec=True) as m_unlink,
+    ):
+        mock_settings.return_value.store_dir = str(tmp_path / "store")
+        mock_settings.return_value.session_path = str(tmp_path / "session")
+        mock_settings.return_value.bot_token = None
+        mock_settings.return_value.api_id = "123"
+        mock_settings.return_value.api_hash = "abc"
+
+        client_instance = mock_client_class.return_value
+        client_instance.start = AsyncMock()
+        client_instance.run_until_disconnected = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        ipc_instance = mock_ipc_class.return_value
+        ipc_instance.bind = AsyncMock(return_value=MagicMock())
+        ipc_instance.serve = AsyncMock()
+
+        mock_inbox_class.return_value.restore_from_store = AsyncMock(return_value=0)
+        mock_bridge_class.return_value.start = AsyncMock()
+
+        with pytest.raises(asyncio.CancelledError):
+            await daemon_main()
+
+        ipc_instance.bind.assert_awaited_once_with(sock=mock_fd)
+        ipc_instance.serve.assert_awaited_once()
+        m_unlink.assert_not_called()  # activation mode: file owned by systemd

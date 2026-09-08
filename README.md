@@ -1,8 +1,8 @@
 # MCP-TG — Telegram MCP Server with Reactive Daemon
 
-**v0.9.2** · Standalone Telegram MCP server — daemon + proxy for multi-agent isolation.
+**v0.9.3** · Standalone Telegram MCP server — daemon + proxy for multi-agent isolation.
 
-[![Version 0.9.2](https://img.shields.io/badge/version-0.9.2-blue)](src/mcp_telegram/_version.py)
+[![Version 0.9.3](https://img.shields.io/badge/version-0.9.3-blue)](src/mcp_telegram/_version.py)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](setup.py)
 [![MCP](https://img.shields.io/badge/MCP-stdio-green)](#)
 [![License: MIT](LICENSE)](LICENSE)
@@ -67,6 +67,7 @@ python -m mcp_telegram.qr_auth  # or: mcp-tg sign-in
 ```bash
 sudo cp scripts/tgmcpd.user.service ~/.config/systemd/user/tgmcpd.service
 systemctl --user daemon-reload
+systemctl --user enable --now tgmcpd.socket
 systemctl --user enable --now tgmcpd
 systemctl --user status tgmcpd
 ```

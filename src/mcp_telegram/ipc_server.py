@@ -29,14 +29,37 @@ class IPCServer:
         self.inbox = inbox
         self.client = client
 
-    async def start(self, sock_path: str) -> None:
-        server = await asyncio.start_unix_server(
-            self._handle_client, path=sock_path
-        )
-        os.chmod(sock_path, 0o600)
-        logger.info("IPC server listening on %s", sock_path)
+    async def bind(
+        self,
+        sock_path: str | None = None,
+        *,
+        sock: socket.socket | None = None,
+    ) -> asyncio.AbstractServer:
+        """Create (activation mode: adopt systemd's fd) the listening server."""
+        if (sock_path is None) == (sock is None):
+            raise ValueError("IPCServer.bind: exactly one of sock_path / sock is required")
+        if sock is not None:
+            server = await asyncio.start_unix_server(self._handle_client, sock=sock)
+            logger.info("IPC server serving on systemd socket %r", sock.getsockname())
+        else:
+            server = await asyncio.start_unix_server(self._handle_client, path=sock_path)
+            os.chmod(sock_path, 0o600)
+            logger.info("IPC server listening on %s", sock_path)
+        return server
+
+    async def serve(self, server: asyncio.AbstractServer) -> None:
         async with server:
             await server.serve_forever()
+
+    async def start(
+        self,
+        sock_path: str | None = None,
+        *,
+        sock: socket.socket | None = None,
+    ) -> None:
+        """Backward-compatible wrapper: bind + serve forever."""
+        server = await self.bind(sock_path, sock=sock)
+        await self.serve(server)
 
     async def _handle_client(
         self,
