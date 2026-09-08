@@ -18,15 +18,20 @@ async def test_stale_socket_removed_on_start(tmp_sock_path):
 
 @pytest.mark.asyncio
 async def test_live_socket_causes_exit(tmp_sock_path):
-    from src.mcp_telegram.daemon import _check_stale_socket
+    # v0.9.3: live-instance detection moved from connect-probe to flock.
+    # While instance 1 holds the lock (socket live), instance 2 exits 69
+    # BEFORE touching the socket file — the unlink race is impossible.
+    from src.mcp_telegram.daemon import acquire_instance_lock
 
     async def handler(r, w):
         pass
     server = await asyncio.start_unix_server(handler, path=tmp_sock_path)
 
+    acquire_instance_lock(tmp_sock_path)  # instance 1: live
     with pytest.raises(SystemExit) as excinfo:
-        await _check_stale_socket(tmp_sock_path)
+        acquire_instance_lock(tmp_sock_path)  # instance 2: must die, not unlink
     assert excinfo.value.code == 69
+    assert Path(tmp_sock_path).exists()  # socket untouched
 
     server.close()
 
@@ -53,6 +58,7 @@ async def test_restore_called_on_start(tmp_path):
     with (
         patch("src.mcp_telegram.daemon.TelegramSettings") as mock_settings,
         patch("src.mcp_telegram.daemon._check_stale_socket"),
+        patch("src.mcp_telegram.daemon.acquire_instance_lock"),
         patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
         patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
         patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,
@@ -91,6 +97,7 @@ async def test_bridge_created_and_started(tmp_path):
     with (
         patch("src.mcp_telegram.daemon.TelegramSettings") as mock_settings,
         patch("src.mcp_telegram.daemon._check_stale_socket"),
+        patch("src.mcp_telegram.daemon.acquire_instance_lock"),
         patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
         patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
         patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,

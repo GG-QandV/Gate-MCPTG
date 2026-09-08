@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -16,27 +18,49 @@ from .telegram import TelegramSettings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_instance_lock_fp = None
+
+
+def acquire_instance_lock(sock_path: str) -> None:
+    """Exclusive single-instance lock (flock).
+
+    Held for the whole process lifetime: while we own it, no other tgmcpd
+    can run, so unlinking a leftover socket file is always safe. A second
+    instance exits 69 before touching anything.
+    """
+    global _instance_lock_fp
+    lock_path = str(Path(sock_path).with_suffix(".lock"))
+    fp = open(lock_path, "w")
+    try:
+        fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError):
+        fp.close()
+        logger.error("Another tgmcpd instance is already running (lock %s)", lock_path)
+        raise SystemExit(69)
+    fp.write(str(os.getpid()))
+    fp.flush()
+    os.fsync(fp.fileno())
+    _instance_lock_fp = fp  # keep open until process exit
+
 
 async def _check_stale_socket(sock_path: str) -> None:
+    """Remove a leftover socket file.
+
+    Safe only because the instance lock is already held: the previous
+    owner is dead, so nothing can be listening on this path.
+    """
     p = Path(sock_path)
     if not p.exists():
         return
-    try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(sock_path), timeout=1.0
-        )
-        writer.close()
-        logger.error("Another tgmcpd instance is already running")
-        sys.exit(69)
-    except (ConnectionRefusedError, OSError):
-        logger.warning("Removing stale socket %s", sock_path)
-        p.unlink(missing_ok=True)
+    logger.warning("Removing stale socket %s", sock_path)
+    p.unlink(missing_ok=True)
 
 
 async def main() -> None:
     cfg = TelegramSettings()
     sock_path = get_sock_path()
 
+    acquire_instance_lock(sock_path)
     await _check_stale_socket(sock_path)
 
     session_path = (
@@ -85,7 +109,6 @@ async def main() -> None:
     finally:
         Path(sock_path).unlink(missing_ok=True)
         logger.info("tgmcpd stopped, socket removed")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
