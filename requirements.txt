@@ -1,0 +1,25 @@
+# tg-mcp MCP Server Requirements
+
+# Core
+telethon
+cryptg
+hachoir
+
+# MCP Protocol
+mcp
+pydantic
+pydantic-settings
+
+# Async
+aiofiles
+
+# Utilities
+python-dotenv
+xdg-base-dirs
+cachetools
+tenacity
+typer
+
+# Auth
+qrcode
+httpx

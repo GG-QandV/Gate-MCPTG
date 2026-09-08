@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  mcp-tg:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-tg:latest
+    container_name: mcp-tg-mcp
+    restart: unless-stopped
+    
+    environment:
+      # Telegram API credentials
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_PHONE=${TELEGRAM_PHONE:-}
+      - TELEGRAM_SESSION_STRING=${TELEGRAM_SESSION_STRING:-}
+      
+      # MCP Server settings  
+      - MCP_HOST=${MCP_HOST:-0.0.0.0}
+      - MCP_PORT=${MCP_PORT:-8765}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=/logs/mcp-tg.log
+      
+      # Performance
+      - WORKERS=${WORKERS:-4}
+      - MAX_CONNECTIONS=${MAX_CONNECTIONS:-100}
+      
+    ports:
+      - "${MCP_PORT:-8765}:8765"
+      
+    volumes:
+      # Persistent session storage
+      - ./data:/data
+      - ./logs:/logs
+      - ./sessions:/home/mcp-tg/.local/state/mcp-telegram
+      
+    networks:
+      - mcp-network
+      
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+          
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; r = requests.get('http://localhost:8765/health', timeout=5); exit(0 if r.status_code == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  mcp-network:
+    driver: bridge
+    
+volumes:
+  data:
+  logs:
+  sessions:

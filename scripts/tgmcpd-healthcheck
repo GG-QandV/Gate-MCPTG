@@ -1,0 +1,17 @@
+#!/bin/bash
+# tgmcpd-healthcheck — проверка что daemon отвечает на IPC health запрос
+set -euo pipefail
+
+SOCK="${TGMCPD_SOCK:-/run/tgmcpd/tgmcpd.sock}"
+
+result=$(echo '{"method":"health","params":{},"id":1}' | socat - UNIX-CONNECT:"$SOCK")
+
+echo "$result" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+status = r.get('result', {}).get('status')
+if status != 'ok':
+    print(f'health check failed: status={status}', file=sys.stderr)
+    sys.exit(1)
+print(f'health check OK: {status}')
+"

@@ -1,0 +1,37 @@
+[Unit]
+Description=Telegram MCP Daemon (tgmcpd) v3 — Reactive Inbox
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=gg
+Group=gg
+
+WorkingDirectory=/home/gg/projects/MCP-TG
+
+ExecStart=/home/gg/.mnemostroma/venv/bin/python -m src.mcp_telegram.daemon
+ExecStartPost=/usr/local/bin/tgmcpd-healthcheck
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+EnvironmentFile=/home/gg/projects/MCP-TG/.env
+
+ProtectHome=true
+ReadWritePaths=/home/gg/projects/MCP-TG /home/gg/tgmcpd/inbox_store /run/tgmcpd
+
+ProtectSystem=strict
+
+RuntimeDirectory=tgmcpd
+Environment=TGMCPD_SOCK=/run/tgmcpd/tgmcpd.sock
+
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

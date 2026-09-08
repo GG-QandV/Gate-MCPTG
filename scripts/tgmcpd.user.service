@@ -1,0 +1,21 @@
+[Unit]
+Description=Telegram MCP Daemon (tgmcpd)
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/SERVICES/MCP-TG
+ExecStart=%h/.mnemostroma/venv/bin/python -m src.mcp_telegram.daemon
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=69
+EnvironmentFile=%h/projects/SERVICES/MCP-TG/.env
+EnvironmentFile=-%h/.config/mcp-tg/.env
+ReadWritePaths=%h/projects/SERVICES/MCP-TG %h/.local/state/tgmcpd
+RuntimeDirectory=tgmcpd
+
+[Install]
+WantedBy=default.target
