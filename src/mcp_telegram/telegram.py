@@ -17,7 +17,7 @@ from xdg_base_dirs import xdg_state_home  # type: ignore[import-error]
 from .qr_auth import QRAuthHandler
 
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 
 class TelegramSettings(BaseSettings):
@@ -62,13 +62,14 @@ class TelegramSettings(BaseSettings):
     group_rate_limit: int = 20
     resolve_daily_limit: int = 200
 
-    class Config:
-        env_prefix = "TELEGRAM_"
-        env_file = ".env"
-        extra = "ignore"  # Игнорируем ВСЕ переменные кроме TELEGRAM_*
-        case_sensitive = False  # Разрешаем любой регистр для совместимости
-        env_nested_delimiter = "__"  # Для вложенных настроек используем __
-        populate_by_name = True
+    model_config = ConfigDict(
+        env_prefix="TELEGRAM_",
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+        env_nested_delimiter="__",
+        populate_by_name=True,
+    )
 
     @property
     def session_path(self) -> str:

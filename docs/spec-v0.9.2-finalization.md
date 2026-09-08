@@ -1,25 +1,25 @@
-# Spec: Finalization of v3 Reactive Inbox — MCP-TG
+# Spec: Finalization of v0.9.2 Reactive Inbox — MCP-TG
 
 **Status:** Draft for review  
 **Date:** 2026-09-08  
-**Branches:** `main` (v2 stable, `9480753`) → `v3-reactive-inbox` (+12, `e4adc4d`) → `main`  
-**Supersedes:** `tg-mcpd Architecture v3 — Reactive Inbox.md` (pull-model) + `tg-mcpd Architecture v3 add some 3 connects.md` (HTTP push) + `developer-guide.md` (v3.1) + `spec-db-lock-resolution.md`  
-**Goal:** Freeze target architecture, close the 2 failing tests and 3 dirty files, merge v3 to main as standalone.
+**Branches:** `main` ( stable, `9480753`) → `v0.9.2-reactive-inbox` (+12, `e4adc4d`) → `main`  
+**Supersedes:** `tg-mcpd Architecture v0.9.2 — Reactive Inbox.md` (pull-model) + `tg-mcpd Architecture v0.9.2 add some 3 connects.md` (HTTP push) + `developer-guide.md` (v0.9.2) + `spec-db-lock-resolution.md`  
+**Goal:** Freeze target architecture, close the 2 failing tests and 3 dirty files, merge v0.9.2 to main as standalone.
 
 ---
 
 ## 1. Context
 
 `mcp-tg` (upstream `66e31ac`) is a single-process stdio MCP server.  
-`MCP-TG v2` (`docs/architecture-v2.md`) solved scaling: one `Telethon` client → N `tg-mcp-proxy` via Unix-socket IPC (`/run/tgmcpd/tgmcpd.sock`), per-topic buffers.
+`MCP-TG ` (`docs/architecture-.md`) solved scaling: one `Telethon` client → N `tg-mcp-proxy` via Unix-socket IPC (`/run/tgmcpd/tgmcpd.sock`), per-topic buffers.
 
-Problem v2 left:
+Problem  left:
 - RAM-only inbox — loss on restart.
 - Polling (`inbox_poll` / `inbox_read`) — cost, latency.
 - No priority rules, no delivery guarantee.
 - `database is locked` when `daemon` and `run_server.sh` race on the same `session.session`.
 
-v3 exists as branch `v3-reactive-inbox` (12 commits ahead). It implements reactive delivery but docs diverged: original v3 pull (`proxy inbox_subscribe` + `inbox_wait`) vs. later push (`InboxBridge` → `opencode` HTTP/tmux/tui/uds). Code reality is the second: `InboxBridge` with 3 transports.
+v0.9.2 exists as branch `v0.9.2-reactive-inbox` (12 commits ahead). It implements reactive delivery but docs diverged: original v0.9.2 pull (`proxy inbox_subscribe` + `inbox_wait`) vs. later push (`InboxBridge` → `opencode` HTTP/tmux/tui/uds). Code reality is the second: `InboxBridge` with 3 transports.
 
 ## 2. Target Architecture (final)
 
@@ -86,10 +86,10 @@ PrivateTmp=false  (developer-guide.md:4 — otherwise socket invisible)
 
 ## 5. Gaps to Close Before Merge (verified 2026-09-08)
 
-Current `v3-reactive-inbox` status (`git status -sb`, `PYTHONPATH=src:. pytest -q`):
+Current `v0.9.2-reactive-inbox` status (`git status -sb`, `PYTHONPATH=src:. pytest -q`):
 
 - **Failing tests 2/23** in `tests/unit/test_inbox_bridge.py`: `test_watch_ack_only_after_successful_push` and `test_watch_routes_tui_transport` — both `assert inbox.ack awaited 1, got 0`. Root: branch changed `inbox.py:48` to `if not msg: return` + `has_media` fields and `telegram.py` to `tui` transport, and added `test_inbox_bridge.py:+118` for `tui`, but `InboxBridge._watch` no longer calls `inbox.ack` at all — it now calls `clear_ram_buffer`. Tests expect `ack`, code does `clear_ram_buffer`. **Fix:** update those 2 tests to assert `clear_ram_buffer` instead of `ack`, or restore `ack` path if intended. Decision: tests are wrong — update tests (ack belongs to agent `inbox_read`, not bridge).
-- **Dirty files:** `M inbox.py`, `M telegram.py`, `M test_inbox_bridge.py` + `?? 6` untracked (`agent-os-architecture.html`, `tg-mcpd Architecture v3 add some 3 connects.md`, `tgmcp-proxy-*.py`, `tgmcpd.user.service`, `inbox.py.bak`, `test_topic_map_parser.py`). **Fix:** commit `inbox.py` media fields + `telegram.py tui` as one commit; either delete or add `test_topic_map_parser.py` (currently `from tests.conftest import make_event` vs `import src` — inconsistent `PYTHONPATH`, needs `pythonpath=src` in `pytest.ini`).
+- **Dirty files:** `M inbox.py`, `M telegram.py`, `M test_inbox_bridge.py` + `?? 6` untracked (`agent-os-architecture.html`, `tg-mcpd Architecture v0.9.2 add some 3 connects.md`, `tgmcp-proxy-*.py`, `tgmcpd.user.service`, `inbox.py.bak`, `test_topic_map_parser.py`). **Fix:** commit `inbox.py` media fields + `telegram.py tui` as one commit; either delete or add `test_topic_map_parser.py` (currently `from tests.conftest import make_event` vs `import src` — inconsistent `PYTHONPATH`, needs `pythonpath=src` in `pytest.ini`).
 - **Pytest invocation:** without `PYTHONPATH=src:.` 7 collection errors (`ModuleNotFoundError: tests` / `src`). `developer-guide.md:4` says `PYTHONPATH=. python -m pytest tests/` — actually needs `PYTHONPATH=src:.` or `pytest.ini` `pythonpath = src .`. **Fix:** add `pythonpath = src` to `pytest.ini`.
 - **DB lock:** `spec-db-lock-resolution.md` diffs not yet applied on branch (check `daemon.py` still `sys.exit(1)`, `run_server.sh` still `mcp-tg`, service still `ExecStartPre rm -f`). **Fix:** apply those 4 diffs before merge (they are independent of inbox).
 
@@ -97,7 +97,7 @@ Current `v3-reactive-inbox` status (`git status -sb`, `PYTHONPATH=src:. pytest -
 
 - `PYTHONPATH=src:. pytest -q` → 23 passed, 0 failed (after fixing the 2).
 - `git diff` clean (or only intended untracked docs ignored).
-- `docs/spec-v3-finalization.md` (this file) reviewed.
+- `docs/spec-v0.9.2-finalization.md` (this file) reviewed.
 - `systemd` `PrivateTmp=false`, `RestartPreventExitStatus=69` verified.
 - Manual e2e: start `tgmcpd`, start one `opencode` on `TG_TOPIC_MAP="-100...:205:tmux:agent:opencode"`, send Telegram message → `store` JSONL written, bridge `paste-buffer -p`, agent receives `⚡ INBOX [...] inbox_read`, `inbox_read` drains store. Restart daemon → `restore_from_store` recovers unread.
 
@@ -106,10 +106,10 @@ Current `v3-reactive-inbox` status (`git status -sb`, `PYTHONPATH=src:. pytest -
 1. Fix the 2 tests + `pytest.ini` (`pythonpath = src`), commit.
 2. Apply `spec-db-lock-resolution.md` diffs (`daemon.py`, `tgmcpd.service`, `run_server.sh`), commit.
 3. Commit or drop the 3 `M` files (media fields + tui transport) as above.
-4. `git checkout main && git merge v3-reactive-inbox --no-ff -m "merge v3 reactive inbox (final)"` (now `main` is `c513964` docs, `v3` is `e4adc4d` docs — same README, will need `ours` for README).
+4. `git checkout main && git merge v0.9.2-reactive-inbox --no-ff -m "merge v0.9.2 reactive inbox (final)"` (now `main` is `c513964` docs, `v0.9.2` is `e4adc4d` docs — same README, will need `ours` for README).
 5. `git push origin main` (standalone).
-6. Tag `v3.0.0`, archive `mcp-tg` fork reference in README.
+6. Tag `v0.9.2.0.0`, archive `mcp-tg` fork reference in README.
 
 ---
 
-**References:** `architecture-v2.md`, `tg-mcpd Architecture v3 — Reactive Inbox.md` (L1-L4, phases 0-8, total 31+31 tests), `add some 3 connects.md` (push variant, rejected), `developer-guide.md` (UМ-А…И, `PrivateTmp`), `spec-db-lock-resolution.md` (4 diffs).
+**References:** `architecture-.md`, `tg-mcpd Architecture v0.9.2 — Reactive Inbox.md` (L1-L4, phases 0-8, total 31+31 tests), `add some 3 connects.md` (push variant, rejected), `developer-guide.md` (UМ-А…И, `PrivateTmp`), `spec-db-lock-resolution.md` (4 diffs).

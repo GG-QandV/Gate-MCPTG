@@ -14,8 +14,6 @@ RestartSec=5
 RestartPreventExitStatus=69
 EnvironmentFile=%h/projects/SERVICES/MCP-TG/.env
 EnvironmentFile=-%h/.config/mcp-tg/.env
-ReadWritePaths=%h/projects/SERVICES/MCP-TG %h/.local/state/tgmcpd
-RuntimeDirectory=tgmcpd
 
 [Install]
 WantedBy=default.target

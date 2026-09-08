@@ -36,7 +36,7 @@ setup(
     version="0.9.2",
     author="MCP-TG Contributors",
     author_email="mcp-tg@keysingate.com",
-    description="MCP-TG v3 — Telegram MCP with reactive daemon (tgmcpd) and IPC proxy",
+    description="MCP-TG v0.9.2 — Telegram MCP with reactive daemon (tgmcpd) and IPC proxy",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="",

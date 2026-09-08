@@ -13,35 +13,11 @@ Standalone MCP server for Telegram — 50+ tools over Model Context Protocol. On
 
 * **tgmcpd daemon** — one `Telethon` client, persistent MTProto session, `InboxEngine` with per-topic buffers + disk persistence (`~/.local/state/tgmcpd/inbox_store`).
 * **tg-mcp-proxy** — thin stateless stdio↔IPC bridge per agent (`TG_TOPIC_ID` isolates topics).
-* **Reactive inbox v3** — `asyncio.Event` wake-up + JSONL store + priority envelope, no polling.
+* **Reactive inbox v0.9.2** — `asyncio.Event` wake-up + JSONL store + priority envelope, no polling.
 
 ## Architecture
 
-### v2 — Daemon + Proxy (L2)
-
-```
-┌────────────────────────────────────────────┐
-│                tg-mcpd daemon               │
-│  ┌─────────────────────┐  ┌──────────────┐  │
-│  │  TelegramClient     │  │  IPC Server  │  │
-│  │  (MTProto)          │  │ /run/tgmcpd │  │
-│  └────────┬────────────┘  └──────┬───────┘  │
-│     ┌─────┴─────┐                │         │
-│     │  Inbox    │                │         │
-│     │ topic→buf │                │         │
-│     └───────────┘                │         │
-└──────────────────────────────────┼─────────┘
-         ┌─────────┬───────────────┼──────────┐
-    ┌────┴────┐ ┌──┴─────┐  ┌──────┴────┐ ┌───┴────┐
-    │ proxy   │ │ proxy  │  │ proxy    │ │ proxy  │
-    │ topic=205│ │topic=310│ │topic=415 │ │ ...    │
-    │stdio↔IPC│ │stdio↔IPC│ │stdio↔IPC │ │        │
-    └────┬────┘ └──┬─────┘  └──────┬───┘ └───┬────┘
-         │         │               │         │
-      Agent1    Agent2          Agent3    Agent4
-```
-
-### v3 — Reactive Inbox
+### v0.9.2 — Reactive Inbox
 
 ```
 Telegram push → Telethon event → InboxEngine.handle()
@@ -54,7 +30,7 @@ Telegram push → Telethon event → InboxEngine.handle()
 * `InboxEngine` — `defaultdict(deque)` buffers + `defaultdict(asyncio.Event)` per topic, `restore_from_store()` on daemon start.
 * `InboxBridge` — push via `tmux`/`tui`/`uds` (`TG_TOPIC_MAP`), `clear_ram_buffer` after push (agent drains via `inbox_read`).
 
-See `docs/architecture-v2.md` and `docs/tg-mcpd Architecture v3 — Reactive Inbox.md`.
+See `docs/tg-mcpd Architecture v0.9.2 — Reactive Inbox.md`.
 
 ## Tools — 50 total (MCP stdio, Telethon/MTProto)
 
@@ -153,8 +129,7 @@ src/mcp_telegram/
   tools.py        # core 50 tools
   server.py       # legacy single-process server
 docs/
-  architecture-v2.md
-  tg-mcpd Architecture v3 — Reactive Inbox.md
+  tg-mcpd Architecture v0.9.2 — Reactive Inbox.md
 scripts/
   tgmcpd.user.service
   tgmcp-proxy-wrapper.py / tgmcp-proxy-watchdog.py

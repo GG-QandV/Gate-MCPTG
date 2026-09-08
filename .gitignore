@@ -109,4 +109,4 @@ Desktop.ini
 .directory
 .Trash-*
 # deprecated v2 docs
-docs/architecture-v2.md
+docs/architecture-legacy.md

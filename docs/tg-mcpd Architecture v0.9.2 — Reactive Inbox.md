@@ -1,4 +1,4 @@
-# tg-mcpd Architecture v3 — Reactive Inbox
+# tg-mcpd Architecture v0.9.2 — Reactive Inbox
 
 ---
 
@@ -12,7 +12,7 @@ text
 
 `Один InboxEngine с буферами по (chat_id, topic_id) Каждый proxy имеет доступ ТОЛЬКО к своему (chat_id, topic_id) Сигнал идёт только тому proxy у которого есть сообщение`
 
-Один общий inbox с правами — это лишняя сложность без выгоды. Изоляция по ключу `(chat_id, topic_id)` уже есть в v2.1 — это и есть персональный inbox.
+Один общий inbox с правами — это лишняя сложность без выгоды. Изоляция по ключу `(chat_id, topic_id)` уже есть в  — это и есть персональный inbox.
 
 ## Б) Инжект правил приоритетности
 
@@ -90,12 +90,12 @@ text
 
 ---
 
-## Что изменилось от v2.1
+## Что изменилось от 
 
-| Компонент | v2.1 | v3  |
+| Компонент |  | v0.9.2  |
 | --------- | ---- | --- |
 
-| Компонент                   | v2.1                     | v3                            |
+| Компонент                   |                      | v0.9.2                            |
 | --------------------------- | ------------------------ | ----------------------------- |
 | Персистентность             | ❌ RAM only               | ✅ JSONL на диске              |
 | Восстановление при рестарте | ❌                        | ✅ `restore_from_store()`      |
@@ -181,7 +181,7 @@ text
 
 `asyncio.Event` — это именно то что нужно: координация между двумя корутинами (`inbox.handle` и `inbox_wait`) внутри одного процесса без внешних зависимостей.
 
-## Workflow реализации tg-mcpd v3
+## Workflow реализации tg-mcpd v0.9.2
 
 ---
 
@@ -189,7 +189,7 @@ text
 
 text
 
-`0.1  Убедиться что v2.1 тесты все зелёные (31/31) 0.2  Создать ветку: git checkout -b v3-reactive-inbox 0.3  Зафиксировать структуру папок:      mkdir -p src/mcp_telegram     mkdir -p tests/unit tests/integration     mkdir -p /home/gg/tgmcpd/inbox_store`
+`0.1  Убедиться что  тесты все зелёные (31/31) 0.2  Создать ветку: git checkout -b v0.9.2-reactive-inbox 0.3  Зафиксировать структуру папок:      mkdir -p src/mcp_telegram     mkdir -p tests/unit tests/integration     mkdir -p /home/gg/tgmcpd/inbox_store`
 
 ---
 
@@ -203,13 +203,13 @@ text
 
 ---
 
-## Фаза 2 — InboxEngine v3
+## Фаза 2 — InboxEngine v0.9.2
 
 **Файл:** `src/mcp_telegram/inbox.py`
 
 text
 
-`2.1  Обновить InboxEngine:      - добавить InboxStore в __init__     - handle(): store.append() ПЕРЕД buffer.append()     - wait(): правильный порядок clear→peek→wait     - ack(): store.ack() + buffer sync атомарно     - restore_from_store(): загрузка при старте 2.2  Тесты unit/test_inbox.py — добавить к существующим:      - test_handle_persists_to_store     - test_restore_loads_unread_on_start     - test_restore_fires_event_if_unread     - test_wait_wakes_on_event            ← asyncio.Event.set()     - test_wait_returns_existing_immediately     - test_wait_no_race_message_before_wait     - test_wait_no_race_message_during_clear     - test_ack_syncs_store_and_buffer     - test_wait_timeout_returns_empty 2.3  Все тесты зелёные → коммит:      git commit -m "feat: InboxEngine v3 + Event + restore"`
+`2.1  Обновить InboxEngine:      - добавить InboxStore в __init__     - handle(): store.append() ПЕРЕД buffer.append()     - wait(): правильный порядок clear→peek→wait     - ack(): store.ack() + buffer sync атомарно     - restore_from_store(): загрузка при старте 2.2  Тесты unit/test_inbox.py — добавить к существующим:      - test_handle_persists_to_store     - test_restore_loads_unread_on_start     - test_restore_fires_event_if_unread     - test_wait_wakes_on_event            ← asyncio.Event.set()     - test_wait_returns_existing_immediately     - test_wait_no_race_message_before_wait     - test_wait_no_race_message_during_clear     - test_ack_syncs_store_and_buffer     - test_wait_timeout_returns_empty 2.3  Все тесты зелёные → коммит:      git commit -m "feat: InboxEngine v0.9.2 + Event + restore"`
 
 ---
 
@@ -249,7 +249,7 @@ text
 
 text
 
-`6.1  Написать полный цикл реактивности:      test_message_triggers_inbox_subscribe:       1. Запустить IPC server с реальным сокетом       2. Запустить proxy подключённый к серверу       3. proxy вызывает inbox_subscribe (висит)       4. Симулировать inbox.handle() с сообщением       5. Проверить что inbox_subscribe вернул конверт       6. Проверить что конверт содержит правила + сообщение      test_message_survives_daemon_restart:       1. handle() → store.append() + buffer       2. Симулировать рестарт (новый InboxEngine)       3. restore_from_store()       4. wait() → возвращает сообщение      test_concurrent_topics_isolated:       1. Два proxy: topic=205, topic=310       2. Сообщение в topic=310       3. Только proxy 310 получает → proxy 205 продолжает ждать      test_ack_clears_store_and_buffer:       1. handle() → persist + buffer       2. ack(last_id)       3. read_all() == []       4. peek() == [] 6.2  Все тесты зелёные → коммит:      git commit -m "test: integration reactive flow v3"`
+`6.1  Написать полный цикл реактивности:      test_message_triggers_inbox_subscribe:       1. Запустить IPC server с реальным сокетом       2. Запустить proxy подключённый к серверу       3. proxy вызывает inbox_subscribe (висит)       4. Симулировать inbox.handle() с сообщением       5. Проверить что inbox_subscribe вернул конверт       6. Проверить что конверт содержит правила + сообщение      test_message_survives_daemon_restart:       1. handle() → store.append() + buffer       2. Симулировать рестарт (новый InboxEngine)       3. restore_from_store()       4. wait() → возвращает сообщение      test_concurrent_topics_isolated:       1. Два proxy: topic=205, topic=310       2. Сообщение в topic=310       3. Только proxy 310 получает → proxy 205 продолжает ждать      test_ack_clears_store_and_buffer:       1. handle() → persist + buffer       2. ack(last_id)       3. read_all() == []       4. peek() == [] 6.2  Все тесты зелёные → коммит:      git commit -m "test: integration reactive flow v0.9.2"`
 
 ---
 
@@ -282,13 +282,13 @@ text
 | 7 Deploy      | 2            | —            | 1        |
 | **Итого**     | **4**        | **31**       | **7**    |
 
-**Финальный счёт тестов: 31 (v2.1) + 31 (v3) = 62 теста.**
+**Финальный счёт тестов: 31 () + 31 (v0.9.2) = 62 теста.**
 
 Понял задачу. Deepseek V4 Flash — модель с хорошим кодом, но слабой инициативой в неоднозначных местах. Нужна спека, которая закрывает все серые зоны до начала кода.
 
 ---
 
-# tg-mcpd v3 — Спека узких мест для агента-кодера
+# tg-mcpd v0.9.2 — Спека узких мест для агента-кодера
 
 **Целевой агент:** Deepseek V4 Flash  
 **Принцип:** каждое узкое место = точная инструкция без вариантов интерпретации
