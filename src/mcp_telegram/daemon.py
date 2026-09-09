@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import logging
 import os
+import signal
 import socket
 import sys
 from pathlib import Path
@@ -80,6 +81,27 @@ def validate_activation_socket(s: socket.socket, expected_path: str) -> None:
             name, listening, expected_path,
         )
         raise SystemExit(69)
+
+
+def _unlink_if_owned(sock_path: str, server: asyncio.AbstractServer) -> None:
+    """Remove the socket file only if it is still the inode we bound.
+
+    Defense in depth: never delete a file re-created by someone else
+    (e.g. systemd re-binding after a crash) — prevents orphaning.
+    """
+    try:
+        st = os.stat(sock_path)
+        sock = server.sockets[0]
+        mine = os.fstat(sock.fileno())
+        if st.st_ino != mine.st_ino:
+            logger.warning(
+                "socket %s inode changed (bound=%d on-disk=%d) — not unlinking",
+                sock_path, mine.st_ino, st.st_ino,
+            )
+            return
+        Path(sock_path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 async def _check_stale_socket(sock_path: str) -> None:
@@ -170,19 +192,38 @@ async def main() -> None:
         )
         raise SystemExit(69) from e
 
+    main_task = asyncio.gather(
+        ipc.serve(server),
+        client.run_until_disconnected(),
+        bridge.start(),
+    )
+
+    def _request_shutdown() -> None:
+        logger.warning("tgmcpd: shutdown signal received")
+        main_task.cancel()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown)
+        except NotImplementedError:
+            pass
+
     try:
-        await asyncio.gather(
-            ipc.serve(server),
-            client.run_until_disconnected(),
-            bridge.start(),
-        )
+        await main_task
+    except asyncio.CancelledError:
+        pass
     finally:
         if not from_activation:
-            Path(sock_path).unlink(missing_ok=True)
+            _unlink_if_owned(sock_path, server)
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=5)
+        except Exception as e:
+            logger.warning("tgmcpd: client.disconnect failed: %s", e)
         logger.info(
-            "tgmcpd stopped (socket owned by systemd)"
+            "tgmcpd stopped gracefully (socket owned by systemd)"
             if from_activation
-            else "tgmcpd stopped, socket removed"
+            else "tgmcpd stopped gracefully, socket removed"
         )
 
 if __name__ == "__main__":

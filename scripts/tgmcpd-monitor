@@ -28,6 +28,13 @@ if [ "$state" != "active" ]; then
     exit 1
 fi
 
+# 1b. zombie unit guard: unit 'active' but file missing (deploy race symptom)
+if [ ! -S "$SOCK" ]; then
+    log "CRITICAL: socket file $SOCK missing while tgmcpd.socket is active — zombie unit, fix: systemctl --user restart tgmcpd.socket"
+    notify critical "tgmcpd: CRITICAL" "socket file missing (zombie unit)"
+    exit 1
+fi
+
 # 2. IPC connect + 3. health
 result=$(echo '{"method":"health","params":{},"id":1}' | socat -t 5 - UNIX-CONNECT:"$SOCK" 2>/dev/null) || {
     log "CRITICAL: IPC connect refused on $SOCK (tgmcpd.service down or restarting)"

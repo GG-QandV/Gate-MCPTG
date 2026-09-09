@@ -187,16 +187,33 @@ Self-heal НЕ добавляем (решено в обсуждении п.1): �
 `FileNotFoundError` → `ConnectionRefusedError` (обоего обработаны в
 `IPCClient.connect`; проверяется тестом).
 
-### 3.8. Миграция (deploy)
+### 3.8. Миграция (deploy) — ПОРЯДОК КРИТИЧЕН
 
 ```bash
 cp scripts/tgmcpd.socket ~/.config/systemd/user/
 cp scripts/tgmcpd.user.service ~/.config/systemd/user/tgmcpd.service
 systemctl --user daemon-reload
+
+# 1) СНАЧАЛА остановить старый (fallback) демон — иначе socket unit
+#    стартует с 'Socket service already active, refusing' → 'Failed to
+#    listen' → зомби-unit: файл сокета удалён, демон держит orphaned inode
+systemctl --user stop tgmcpd
+# 2) затем сокет (он создаёт файл)
 systemctl --user enable --now tgmcpd.socket
+# 3) затем сервис
 systemctl --user restart tgmcpd
+
 systemctl --user status tgmcpd.socket tgmcpd.service
 ```
+
+**Симптом гонки деплоя:** файл сокета отсутствует при `tgmcpd.socket = active`,
+в journal пара «refusing / Failed to listen» + «Listening on» в одну секунду,
+в `ss -x` слушатель есть, но только у демона (orphaned inode), у systemd fd нет.
+Лечение: `systemctl --user stop tgmcpd tgmcpd.socket` → `start tgmcpd.socket` →
+`start tgmcpd`. Защита в мониторе — zombie guard (§3.6, шаг 1b).
+
+Проверка корректности владения: `ss -x -lpn | grep tgmcpd.sock` должен показывать
+**двух** держателей LISTEN — `systemd` и `python` (fd демона).
 
 Откат: `systemctl --user disable --now tgmcpd.socket` + убрать `Requires` +
 рестарт сервиса (fallback-режим полностью совместим с 0.9.2-инфраструктурой).

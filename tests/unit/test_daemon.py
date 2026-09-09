@@ -60,6 +60,7 @@ async def test_restore_called_on_start(tmp_path):
         patch("src.mcp_telegram.daemon._check_stale_socket"),
         patch("src.mcp_telegram.daemon.acquire_instance_lock"),
         patch("src.mcp_telegram.daemon.sd_listen_fds", return_value=[]),
+        patch("src.mcp_telegram.daemon.get_sock_path", return_value=str(tmp_path / "tgmcpd.sock")),
         patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
         patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
         patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,
@@ -75,6 +76,7 @@ async def test_restore_called_on_start(tmp_path):
         client_instance.run_until_disconnected = AsyncMock(
             side_effect=asyncio.CancelledError()
         )
+        client_instance.disconnect = AsyncMock()
 
         ipc_instance = mock_ipc_class.return_value
         ipc_instance.bind = AsyncMock(return_value=MagicMock())
@@ -85,10 +87,10 @@ async def test_restore_called_on_start(tmp_path):
 
         from src.mcp_telegram.daemon import main as daemon_main
 
-        with pytest.raises(asyncio.CancelledError):
-            await daemon_main()
+        await daemon_main()  # graceful: CancelledError swallowed
 
         mock_inbox.restore_from_store.assert_awaited_once()
+        client_instance.disconnect.assert_awaited_once()
         assert mock_inbox_class.call_args[1]["store"] is not None
 
 
@@ -101,6 +103,7 @@ async def test_bridge_created_and_started(tmp_path):
         patch("src.mcp_telegram.daemon._check_stale_socket"),
         patch("src.mcp_telegram.daemon.acquire_instance_lock"),
         patch("src.mcp_telegram.daemon.sd_listen_fds", return_value=[]),
+        patch("src.mcp_telegram.daemon.get_sock_path", return_value=str(tmp_path / "tgmcpd.sock")),
         patch("src.mcp_telegram.daemon.TelegramClient") as mock_client_class,
         patch("src.mcp_telegram.daemon.InboxEngine") as mock_inbox_class,
         patch("src.mcp_telegram.daemon.IPCServer") as mock_ipc_class,
@@ -118,6 +121,7 @@ async def test_bridge_created_and_started(tmp_path):
         client_instance.run_until_disconnected = AsyncMock(
             side_effect=asyncio.CancelledError()
         )
+        client_instance.disconnect = AsyncMock()
 
         ipc_instance = mock_ipc_class.return_value
         ipc_instance.bind = AsyncMock(return_value=MagicMock())
@@ -129,8 +133,7 @@ async def test_bridge_created_and_started(tmp_path):
         bridge_instance = mock_bridge_class.return_value
         bridge_instance.start = AsyncMock()
 
-        with pytest.raises(asyncio.CancelledError):
-            await daemon_main()
+        await daemon_main()  # graceful: CancelledError swallowed
 
         mock_bridge_class.assert_called_once_with(
             inbox=mock_inbox,
@@ -171,6 +174,7 @@ async def test_main_activation_uses_fd_no_unlink(tmp_path):
         client_instance.run_until_disconnected = AsyncMock(
             side_effect=asyncio.CancelledError()
         )
+        client_instance.disconnect = AsyncMock()
 
         ipc_instance = mock_ipc_class.return_value
         ipc_instance.bind = AsyncMock(return_value=MagicMock())
@@ -179,9 +183,9 @@ async def test_main_activation_uses_fd_no_unlink(tmp_path):
         mock_inbox_class.return_value.restore_from_store = AsyncMock(return_value=0)
         mock_bridge_class.return_value.start = AsyncMock()
 
-        with pytest.raises(asyncio.CancelledError):
-            await daemon_main()
+        await daemon_main()  # graceful: CancelledError swallowed
 
         ipc_instance.bind.assert_awaited_once_with(sock=mock_fd)
+        client_instance.disconnect.assert_awaited_once()
         ipc_instance.serve.assert_awaited_once()
         m_unlink.assert_not_called()  # activation mode: file owned by systemd

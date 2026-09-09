@@ -6,9 +6,16 @@ import logging
 import os
 import socket
 import struct
+import time
+import uuid
 from pathlib import Path
 
+from . import _version
+
 logger = logging.getLogger(__name__)
+
+STREAM_LIMIT = 1024 * 1024  # 1MB per JSON line — hard guard
+_started_at = time.monotonic()
 
 
 def get_sock_path() -> str:
@@ -39,10 +46,14 @@ class IPCServer:
         if (sock_path is None) == (sock is None):
             raise ValueError("IPCServer.bind: exactly one of sock_path / sock is required")
         if sock is not None:
-            server = await asyncio.start_unix_server(self._handle_client, sock=sock)
+            server = await asyncio.start_unix_server(
+                self._handle_client, sock=sock, limit=STREAM_LIMIT
+            )
             logger.info("IPC server serving on systemd socket %r", sock.getsockname())
         else:
-            server = await asyncio.start_unix_server(self._handle_client, path=sock_path)
+            server = await asyncio.start_unix_server(
+                self._handle_client, path=sock_path, limit=STREAM_LIMIT
+            )
             os.chmod(sock_path, 0o600)
             logger.info("IPC server listening on %s", sock_path)
         return server
@@ -87,6 +98,31 @@ class IPCServer:
                     )
                 except asyncio.TimeoutError:
                     logger.warning("IPC client fd=%d read timeout", peer_fd)
+                    break
+                except (ValueError, asyncio.LimitOverrunError):
+                    resp = {
+                        "error": {
+                            "code": -32600,
+                            "message": "line too long (limit 1048576 bytes)",
+                        },
+                        "id": None,
+                    }
+                    writer.write(json.dumps(resp).encode() + b"\n")
+                    await writer.drain()
+                    logger.warning("IPC client fd=%d line too long, closing", peer_fd)
+                    # drain in-flight bytes so the error is delivered as FIN
+                    # (no RST), then close — client reconnects via IPCClient
+                    try:
+                        drained = 0
+                        while drained < 8 * 1024 * 1024:
+                            chunk = await asyncio.wait_for(
+                                reader.read(65536), timeout=1.0
+                            )
+                            if not chunk:
+                                break
+                            drained += len(chunk)
+                    except (asyncio.TimeoutError, ConnectionError):
+                        pass
                     break
 
                 if not line:
@@ -190,7 +226,8 @@ class IPCServer:
             else:
                 import tempfile
                 safe_name = Path(msg.file.name or f"file_{message_id}").name
-                dest = str(Path(tempfile.gettempdir()) / f"tg_dl_{chat_id}_{message_id}_{safe_name}")
+                uniq = uuid.uuid4().hex[:8]
+                dest = str(Path(tempfile.gettempdir()) / f"tg_dl_{chat_id}_{message_id}_{uniq}_{safe_name}")
             dest_path = await msg.download_media(file=dest)
             return {"path": str(dest_path), "name": msg.file.name, "size": msg.file.size}
 
@@ -200,11 +237,18 @@ class IPCServer:
                 f"{k[0]}_{k[1]}": len(v)
                 for k, v in self.inbox._buffers.items()
             }
+            stats = dict(getattr(self.inbox, "stats", {}))
+            stats["retention_dropped"] = getattr(
+                self.inbox.store, "retention_dropped", 0
+            )
             return {
                 "status": "ok",
                 "store": store_health,
                 "ram_buffers": buffers,
                 "telegram": self.client.is_connected(),
+                "uptime_s": round(time.monotonic() - _started_at, 1),
+                "version": _version.__version__,
+                "stats": stats,
             }
 
         else:

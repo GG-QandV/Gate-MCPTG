@@ -33,7 +33,7 @@ dev_requirements = [
 
 setup(
     name="mcp-tg",
-    version="0.9.3",
+    version="0.9.4",
     author="MCP-TG Contributors",
     author_email="mcp-tg@keysingate.com",
     description="MCP-TG v0.9.2 — Telegram MCP with reactive daemon (tgmcpd) and IPC proxy",

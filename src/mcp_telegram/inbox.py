@@ -9,6 +9,55 @@ logger = logging.getLogger(__name__)
 INBOX_MAXLEN = 200
 
 
+def message_to_entry(msg) -> dict:
+    """Defensive Telegram message -> JSON-safe inbox entry.
+
+    Pure function, no test-awareness: every attribute is read through
+    getattr with defaults and isinstance-checked before serialization.
+    """
+    r = getattr(msg, "reply_to", None)
+    topic_id = (
+        getattr(r, "reply_to_top_id", None)
+        or getattr(r, "reply_to_msg_id", None)
+        or 0
+    )
+    txt = getattr(msg, "text", None)
+    text = txt if isinstance(txt, str) else ""
+
+    file_size = 0
+    file_name = ""
+    raw_file = getattr(msg, "file", None)
+    if raw_file is not None:
+        sv = getattr(raw_file, "size", 0)
+        if isinstance(sv, (int, float)):
+            file_size = int(sv)
+        nv = getattr(raw_file, "name", "")
+        if isinstance(nv, str):
+            file_name = nv
+
+    def _has(attr: str) -> bool:
+        v = getattr(msg, attr, None)
+        if v is None:
+            return False
+        return bool(v)
+
+    date = getattr(msg, "date", None)
+    ts = int(date.timestamp()) if date is not None and hasattr(date, "timestamp") else 0
+    return {
+        "id": msg.id,
+        "text": text,
+        "from": str(getattr(msg, "sender_id", "")),
+        "ts": ts,
+        "topic": topic_id,
+        "has_media": _has("media"),
+        "has_voice": _has("voice"),
+        "has_video": _has("video"),
+        "has_document": _has("document"),
+        "file_size": file_size,
+        "file_name": file_name,
+    }
+
+
 class InboxEngine:
     def __init__(self, store, maxlen: int = INBOX_MAXLEN):
         self.store = store
@@ -18,6 +67,13 @@ class InboxEngine:
         )
         self._events: dict[tuple, asyncio.Event] = defaultdict(asyncio.Event)
         self._lock = asyncio.Lock()
+        self.stats = {
+            "messages_in": 0,
+            "acked": 0,
+            "restored": 0,
+            "dropped_overflow": 0,
+            "retention_dropped": 0,
+        }
 
     async def restore_from_store(self) -> int:
         total = 0
@@ -40,6 +96,7 @@ class InboxEngine:
                         self._buffers[key].append(msg)
                     self._events[key].set()
                 total += len(msgs)
+                self.stats["restored"] += len(msgs)
                 logger.info(
                     "Restored %d messages for chat=%d topic=%d",
                     len(msgs), chat_id, topic_id,
@@ -51,67 +108,22 @@ class InboxEngine:
         if not msg:
             return
         # Принимаем всё из канала: текст, войс, видео, архивы до 2 ГБ — без резки
+        entry = message_to_entry(msg)
         chat_id = msg.chat_id
-        r = getattr(msg, "reply_to", None)
-        topic_id = (
-            getattr(r, "reply_to_top_id", None)
-            or getattr(r, "reply_to_msg_id", None)
-            or 0
-        )
-        # Мета для любого типа, файл качается отдельно через download_file по id
-        def _is_mock(v):
-            return hasattr(v, "_mock_name")
-
-        def _has(attr):
-            v = getattr(msg, attr, None)
-            if v is None or _is_mock(v):
-                return False
-            return bool(v)
-
-        raw_file = getattr(msg, "file", None)
-        if raw_file is None or _is_mock(raw_file):
-            file = None
-        else:
-            file = raw_file
-
-        file_size = 0
-        file_name = ""
-        if file is not None:
-            sv = getattr(file, "size", 0)
-            if isinstance(sv, (int, float)) and not _is_mock(sv):
-                try:
-                    file_size = int(sv)
-                except Exception:
-                    file_size = 0
-            nv = getattr(file, "name", "")
-            if isinstance(nv, str) and not _is_mock(nv):
-                file_name = nv
-
-        txt = getattr(msg, "text", None)
-        text = txt if isinstance(txt, str) else ""
-        entry = {
-            "id": msg.id,
-            "text": text,
-            "from": str(msg.sender_id),
-            "ts": int(msg.date.timestamp()),
-            "has_media": _has("media"),
-            "has_voice": _has("voice"),
-            "has_video": _has("video"),
-            "has_document": _has("document"),
-            "file_size": file_size,
-            "file_name": file_name,
-        }
-        key = (chat_id, topic_id)
-        await self.store.append(chat_id, topic_id, entry)
+        key = (chat_id, entry["topic"])
+        await self.store.append(chat_id, entry["topic"], entry)
+        self.stats["retention_dropped"] = getattr(self.store, "retention_dropped", 0)
         async with self._lock:
             buf = self._buffers[key]
             if len(buf) == self.maxlen:
                 logger.warning(
                     "inbox overflow chat=%d topic=%d dropping oldest",
-                    chat_id, topic_id,
+                    chat_id, entry["topic"],
                 )
+                self.stats["dropped_overflow"] += 1
             buf.append(entry)
             self._events[key].set()
+        self.stats["messages_in"] += 1
 
     async def peek(self, chat_id: int, topic_id: int) -> list:
         key = (chat_id, topic_id)
@@ -161,4 +173,5 @@ class InboxEngine:
             )
             self._buffers[key] = remaining
         store_dropped = await self.store.ack(chat_id, topic_id, last_id)
+        self.stats["acked"] += 1
         return store_dropped
