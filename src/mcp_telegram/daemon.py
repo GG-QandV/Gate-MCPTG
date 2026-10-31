@@ -171,7 +171,7 @@ async def main() -> None:
     if restored:
         logger.warning("Restored %d unread messages from disk after restart", restored)
 
-    client.add_event_handler(inbox.handle, events.NewMessage)
+    client.add_event_handler(inbox.handle, events.NewMessage(incoming=True, outgoing=True))
 
     ipc = IPCServer(inbox, client)
 
