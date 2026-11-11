@@ -2,11 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict, deque
 
 logger = logging.getLogger(__name__)
 
 INBOX_MAXLEN = 200
+
+# Политика подъёма после рестарта (решение владельца 2026-11-11):
+# - в RAM поднимаются сообщения ≤4ч и с маркером-исключением;
+# - сообщения старше 2 суток без маркера удаляются (retention);
+# - середина (4ч–2 суток) остаётся на диске, не поднимается.
+RESTORE_MAX_AGE_S = 4 * 3600
+RETENTION_DELETE_S = 2 * 86400
+EXCEPTION_MARKERS = ("исключение", "не удалять", "это оставить")
+
+
+def _has_exception_marker(text: object) -> bool:
+    if not isinstance(text, str):
+        return False
+    lowered = text.lower()
+    return any(m in lowered for m in EXCEPTION_MARKERS)
 
 
 def message_to_entry(msg) -> dict:
@@ -75,8 +91,15 @@ class InboxEngine:
             "retention_dropped": 0,
         }
 
-    async def restore_from_store(self) -> int:
+    async def restore_from_store(self, now: float | None = None) -> int:
+        """Поднять незакрытые сообщения после рестарта.
+
+        Политика: в RAM — только свежие (≤4ч) и с маркером-исключением;
+        старше 2 суток без маркера — удалить; середина остаётся на диске.
+        """
+        now = time.time() if now is None else now
         total = 0
+        pruned = 0
         health = await self.store.health_check()
         for fname, stat in health.items():
             if stat["corrupt"] > 0:
@@ -89,18 +112,36 @@ class InboxEngine:
             chat_id = int(body[:last_sep])
             topic_id = int(body[last_sep + 1:])
             msgs = await self.store.read_all(chat_id, topic_id)
-            if msgs:
+            if not msgs:
+                continue
+            keep: list[dict] = []
+            lift: list[dict] = []
+            for m in msgs:
+                ts = m.get("ts") or 0
+                age = (now - ts) if ts > 0 else 0
+                marked = _has_exception_marker(m.get("text"))
+                if ts > 0 and age > RETENTION_DELETE_S and not marked:
+                    pruned += 1
+                    continue
+                keep.append(m)
+                if marked or age <= RESTORE_MAX_AGE_S:
+                    lift.append(m)
+            if len(keep) != len(msgs):
+                await self.store.replace(chat_id, topic_id, keep)
+            if lift:
                 key = (chat_id, topic_id)
                 async with self._lock:
-                    for msg in msgs:
+                    for msg in lift:
                         self._buffers[key].append(msg)
                     self._events[key].set()
-                total += len(msgs)
-                self.stats["restored"] += len(msgs)
+                total += len(lift)
+                self.stats["restored"] += len(lift)
                 logger.info(
                     "Restored %d messages for chat=%d topic=%d",
-                    len(msgs), chat_id, topic_id,
+                    len(lift), chat_id, topic_id,
                 )
+        if pruned:
+            logger.warning("Retention: pruned %d messages older than 2d", pruned)
         return total
 
     async def handle(self, event) -> None:

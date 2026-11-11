@@ -137,6 +137,14 @@ class InboxStore:
         async with self._lock:
             return await asyncio.to_thread(_read_all_sync, path, self.max_records)
 
+    async def replace(self, chat_id: int, topic_id: int, msgs: list[dict]) -> None:
+        """Перезаписать файл заданным списком (для retention-prune при restore)."""
+        path = self._path(chat_id, topic_id)
+        lines = [json.dumps(m, ensure_ascii=False) for m in msgs]
+        async with self._lock:
+            await asyncio.to_thread(_rewrite, path, lines)
+            self._health_cache = None
+
     async def ack(self, chat_id: int, topic_id: int, last_id: int) -> int:
         path = self._path(chat_id, topic_id)
         async with self._lock:
