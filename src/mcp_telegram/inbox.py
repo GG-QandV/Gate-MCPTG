@@ -164,14 +164,14 @@ class InboxEngine:
         key = (chat_id, topic_id)
         async with self._lock:
             buf = self._buffers.get(key)
-            if not buf:
-                return 0
-            before = len(buf)
-            remaining = deque(
-                (m for m in buf if m["id"] > last_id),
-                maxlen=self.maxlen,
-            )
-            self._buffers[key] = remaining
+            if buf:
+                remaining = deque(
+                    (m for m in buf if m["id"] > last_id),
+                    maxlen=self.maxlen,
+                )
+                self._buffers[key] = remaining
+        # store.ack вызывается ВСЕГДА: иначе при пустом RAM-буфере
+        # (сообщения подняты из store) сообщение не удаляется никогда.
         store_dropped = await self.store.ack(chat_id, topic_id, last_id)
         self.stats["acked"] += 1
         return store_dropped

@@ -50,6 +50,19 @@ async def test_ack_empty_buffer(inbox):
 
 
 @pytest.mark.asyncio
+async def test_ack_cleans_store_when_ram_buffer_empty(inbox, inbox_store):
+    """Регресс: при пустом RAM-буфере (сообщения подняты из store) ack терял store."""
+    for i in (1, 2, 3):
+        await inbox_store.append(100, 205, {"id": i, "text": f"m{i}", "topic": 205})
+    assert [m["id"] for m in await inbox.peek(100, 205)] == [1, 2, 3]
+
+    dropped = await inbox.ack(100, 205, last_id=1)
+
+    assert dropped == 1
+    assert [m["id"] for m in await inbox.peek(100, 205)] == [2, 3]
+
+
+@pytest.mark.asyncio
 async def test_peek_empty(inbox):
     assert await inbox.peek(999, 999) == []
 
