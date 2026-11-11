@@ -9,6 +9,12 @@ agent:opencode ждёт ответа, ответ не приходит, чат �
 healthcheck-протоколу (inbox_peek для актуального топика). Если timeout
 превышен, SIGTERM → grace → SIGKILL → перезапуск.
 
+Важно: watchdog осмысленен ТОЛЬКО когда у прокси есть живой клиент на stdin
+(MCP-клиент: opencode/claude в tmux и т.п.). Без клиента stdio-сервер
+получает EOF и мгновенно выходит с rc=0 — рестартить его в цикле
+бессмысленно: такой случай определяется по короткому uptime + rc==0,
+watchdog завершается с кодом 0, никого не крутя.
+
 Использование:
   python3 tgmcp-proxy-watchdog.py --sock /run/user/1000/tgmcpd.sock --topic 205
 """
@@ -28,6 +34,9 @@ PING_TIMEOUT_S = 15.0
 TERM_GRACE_S = 3.0
 MAX_RESTARTS = 5
 RESTART_BACKOFF_S = 5.0
+# Ребёнок, проживший меньше этого времени и вышедший с rc==0, не висел,
+# а получил EOF без клиента — рестартить бессмысленно, выходим.
+MIN_UPTIME_S = 10.0
 
 
 def _ping(sock_path: str, topic_id: int) -> bool:
@@ -63,23 +72,23 @@ def _terminate(proc: subprocess.Popen) -> None:
             pass
 
 
-def _watch(proc, sock_path, topic_id, stop_evt, restarts):
-    """Фон-поток: пингует UDS каждые PING_INTERVAL_S, рестартит при зависании."""
+def _watch(proc, sock_path, topic_id, stop_evt, ping_interval: float) -> None:
+    """Фон-поток: пингует UDS, при зависании убивает процесс.
+
+    Перезапуск НЕ здесь: главный цикл считает ВСЕ рестарты (и зависания,
+    и падения), иначе лимит MAX_RESTARTS не срабатывает.
+    """
     while not stop_evt.is_set():
-        time.sleep(PING_INTERVAL_S)
+        if stop_evt.wait(ping_interval):
+            return
         if stop_evt.is_set() or proc.poll() is not None:
             return
-        ok = _ping(sock_path, topic_id)
-        if ok:
+        if _ping(sock_path, topic_id):
             continue
-        # Завис: убьём и перезапустим процесс
-        restarts[0] += 1
-        if restarts[0] > MAX_RESTARTS:
-            print(f"[watchdog] превышен лимит рестартов ({MAX_RESTARTS})", file=sys.stderr)
-            return
-        print(f"[watchdog] proxy завис (рестарт {restarts[0]}/{MAX_RESTARTS}), kill+restart", file=sys.stderr)
+        # Завис: убить; перезапуск произойдёт в main-цикле
+        print(f"[watchdog] proxy не отвечает на ping, kill+restart", file=sys.stderr)
         _terminate(proc)
-        # Перезапуск происходит в main-цикле
+        return
 
 
 def main(argv=None) -> int:
@@ -87,6 +96,10 @@ def main(argv=None) -> int:
     p.add_argument("--sock", default="/run/user/1000/tgmcpd.sock")
     p.add_argument("--topic", type=int, default=205)
     p.add_argument("--proxy", default="/home/gg/projects/SERVICES/MCP-TG/scripts/tgmcp-proxy-wrapper.py")
+    p.add_argument("--ping-interval", type=float, default=PING_INTERVAL_S)
+    p.add_argument("--min-uptime", type=float, default=MIN_UPTIME_S)
+    p.add_argument("--max-restarts", type=int, default=MAX_RESTARTS)
+    p.add_argument("--backoff", type=float, default=RESTART_BACKOFF_S)
     args = p.parse_args(argv)
 
     if not os.path.exists(args.sock):
@@ -105,6 +118,7 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGINT, _shutdown)
 
     while not stop_evt.is_set():
+        start = time.monotonic()
         proc = subprocess.Popen(
             [sys.executable, args.proxy],
             stdin=sys.stdin,
@@ -113,16 +127,33 @@ def main(argv=None) -> int:
         )
         # watchdog в фоне
         t = threading.Thread(
-            target=_watch, args=(proc, args.sock, args.topic, stop_evt, restarts), daemon=True
+            target=_watch, args=(proc, args.sock, args.topic, stop_evt, args.ping_interval), daemon=True
         )
         t.start()
         rc = proc.wait()
+        uptime = time.monotonic() - start
         if stop_evt.is_set():
             break
-        if restarts[0] >= MAX_RESTARTS:
-            print(f"[watchdog] лимит рестартов, выхожу", file=sys.stderr)
+        # ЛЮБОЙ перезапуск считается: и зависание, и падение, и чистый выход.
+        restarts[0] += 1
+        if restarts[0] > args.max_restarts:
+            print(f"[watchdog] лимит рестартов ({args.max_restarts}), выхожу", file=sys.stderr)
             return 1
-        time.sleep(RESTART_BACKOFF_S)
+        if uptime < args.min_uptime and rc == 0:
+            # Чистый мгновенный выход = EOF без клиента на stdin.
+            # Супервизить нечего: зависания тут быть не может.
+            print(
+                f"[watchdog] proxy вышел сам (uptime {uptime:.1f}s, rc=0) — "
+                f"клиента нет, выхожу без рестарта",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            f"[watchdog] рестарт {restarts[0]}/{args.max_restarts} "
+            f"через {args.backoff}s (uptime {uptime:.1f}s, rc={rc})",
+            file=sys.stderr,
+        )
+        stop_evt.wait(args.backoff)
     return 0
 
 
