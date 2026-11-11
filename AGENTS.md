@@ -23,3 +23,11 @@
 | `send_message` | Чтобы ответить пользователю в Telegram-топик |
 
 **Нарушение протокола = баг.** Если не можешь ответить — напиши об этом через `send_message`.
+
+## Git remotes — база и зеркало (BINDING)
+
+- **База (источник правды): `origin` = GitHub** → `github.com/GG-QandV/Gate-MCPTG.git`
+- **Зеркало: `gitgud`** → `ssh.gitgud.io:GGQandV/Gate-MCPTG.git`
+- Upstream `main` = `origin/main`. Пуш: `git push origin main`, затем `git push gitgud main`.
+- Проверка после пуша: `git rev-parse HEAD` = `git ls-remote origin main` = `git ls-remote gitgud main`.
+- Если `git status -sb` показывает `...gitgud/main` — конфигурация неверна, исправить на `origin/main`.
